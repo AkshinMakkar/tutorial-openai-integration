@@ -4,6 +4,7 @@ import sqlite3
 import hashlib
 from pygame import mixer
 import elevenlabs as eleven
+from elevenlabs.client import ElevenLabs
 import pygame._sdl2 as sdl2
 from gtts import gTTS
 import os
@@ -13,7 +14,9 @@ import signal
 import openai
 import speech_recognition as sr
 import params
-
+import requests
+import json
+import time
 from viam.components.servo import Servo
 from viam.components.base import Base
 from viam.robot.client import RobotClient
@@ -29,8 +32,9 @@ if res.fetchone() is None:
 
 openai.organization = params.openai_organization
 openai.api_key = params.openai_api_key
-if (params.elevenlabs_key):
-    eleven.set_api_key(params.elevenlabs_key)
+
+if params.elevenlabs_key:
+    client = ElevenLabs(api_key=params.elevenlabs_key)
 
 # if you want to specify a specific device, you can pass devicename = params.mixer_device
 # see https://pypi.org/project/SpeechRecognition/ for troubleshooting tips
@@ -51,16 +55,48 @@ async def say(text):
     file = 'cache/' + current_char + hashlib.md5(text.encode()).hexdigest() 
     try:
         if (re.match("^As an AI language model", text) or not os.path.isfile(file + ".mp3")):
+            
+            
+
+            CHUNK_SIZE = 1024
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+
+            headers = {
+                "Accept": "audio/mpeg",
+                "Content-Type": "application/json",
+                "xi-api-key": params.elevenlabs_key
+            }
+
             if (params.elevenlabs_key and ((current_char and "voice" in params.char_list[current_char.lstrip()]) or (params.elevenlabs_default_voice != ""))):
                 if (current_char and "voice" in params.char_list[current_char.lstrip()]):
                     print(params.char_list[current_char.lstrip()])
-                    voice = params.char_list[current_char.lstrip()]["voice"]
+                    voice_id = params.char_list[current_char.lstrip()]["voice"]
                 else:
-                    voice = params.elevenlabs_default_voice
-                audio = eleven.generate(text=text, voice=current_char)
+                    voice_id = params.elevenlabs_default_voice
+                
+                data = {
+                    "text": text,
+                    "model_id": "eleven_monolingual_v1",
+                    "voice_settings": {
+                        "stability": 0.5,
+                        "similarity_boost": 0.75
+                    }
+                }
+
+                response = requests.post(url, json=data, headers=headers)
+
+                if response.status_code == 200:
+                    with open(file + ".mp3", 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=CHUNK_SIZE):
+                            if chunk:
+                                f.write(chunk)
+                    print("Audio file saved successfully.")
+                else:
+                    print(f"Error: {response.status_code}")
+                    print(response.text)
+
                 time.sleep(1)
-                eleven.save(audio=audio, filename=file + ".mp3")
-                time.sleep(1)
+
             else:
                 myobj = gTTS(text=text, lang='en', slow=False)
                 myobj.save(file + ".mp3")
